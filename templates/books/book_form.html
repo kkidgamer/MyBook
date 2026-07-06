@@ -1,0 +1,27 @@
+{% extends 'base.html' %}
+
+{% block title %}Add Book - MyBook{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h1>Add New Book</h1>
+    <form method="post">
+        {% csrf_token %}
+        {% for field in form %}
+        <div class="form-group">
+            <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+            {{ field }}
+            {% if field.errors %}
+            <ul style="color: #dc2626; font-size: 0.8rem; margin-top: 0.25rem;">
+                {% for error in field.errors %}<li>{{ error }}</li>{% endfor %}
+            </ul>
+            {% endif %}
+        </div>
+        {% endfor %}
+        <div style="display: flex; gap: 0.5rem; margin-top: 1rem;">
+            <button type="submit" class="btn btn-success">Save Book</button>
+            <a href="{% url 'books:list' %}" class="btn btn-secondary">Cancel</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

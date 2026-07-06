@@ -1,0 +1,62 @@
+{% extends 'base.html' %}
+
+{% block title %}Books - MyBook{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="header-bar">
+        <h1>Books</h1>
+        <a href="{% url 'books:add' %}" class="btn btn-success">+ Add Book</a>
+    </div>
+
+    {% if books %}
+    <table>
+        <thead>
+            <tr>
+                <th>Title</th>
+                <th>Price</th>
+                <th>In Stock</th>
+                <th>Min Stock</th>
+                <th>ISBN</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for book in books %}
+            <tr>
+                <td>{{ book.title }}</td>
+                <td>${{ book.price }}</td>
+                <td>{{ book.current_quantity }}</td>
+                <td>{{ book.min_stock }}</td>
+                <td>{{ book.isbn|default:"—" }}</td>
+                <td>
+                    {% if book.is_low_stock %}
+                    <span style="color: #dc2626; font-weight: 600;">⚠ Low Stock</span>
+                    {% else %}
+                    <span style="color: #059669;">✓ OK</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    {% if page_obj.paginator.num_pages > 1 %}
+    <div class="pagination">
+        {% if page_obj.has_previous %}
+        <a href="?page=1">&laquo; First</a>
+        <a href="?page={{ page_obj.previous_page_number }}">Previous</a>
+        {% endif %}
+        <span class="current">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+        {% if page_obj.has_next %}
+        <a href="?page={{ page_obj.next_page_number }}">Next</a>
+        <a href="?page={{ page_obj.paginator.num_pages }}">Last &raquo;</a>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% else %}
+    <p style="color: #6b7280; text-align: center; padding: 3rem 0;">No books yet. <a href="{% url 'books:add' %}">Add your first book</a>.</p>
+    {% endif %}
+</div>
+{% endblock %}

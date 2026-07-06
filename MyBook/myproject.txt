@@ -1,0 +1,22 @@
+A project to handle book stocks delivery and inventory
+
+Main Apps:
+
+books: Book model (title, unique identifier if any, price, current_quantity, min_stock). No author needed per your note.
+customers: Customer (name, phone, address, notes).
+orders:
+Order (customer FK, order_date, status: Pending/Paid/Ready_For_Delivery/Delivered/Cancelled, total_amount, payment_received_amount, payment_notes).
+OrderItem (order FK, book FK, quantity, item_price).
+
+deliveries: Delivery (order FK, delivery_date, status, notes, delivered_by).
+
+Core Workflow:
+
+Staff creates Order → adds Customer + OrderItems (auto-calculate total).
+Stock check: prevent creation if insufficient quantity (or allow backorder flag).
+Manually key in payment: update payment_received_amount + notes → if full, auto-transition status to Paid/Ready_For_Delivery and deduct stock via transaction.
+Mark for delivery only after Paid status.
+Record actual delivery.
+
+
+The project will run on a django backend using mysql database and a react+vite
