@@ -1,6 +1,7 @@
 from django.contrib import admin
 from django.urls import path, include
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
+from . import views
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -12,6 +13,10 @@ urlpatterns = [
     path('api/', include('customers.api_urls')),
     path('api/', include('orders.api_urls')),
     path('api/', include('deliveries.api_urls')),
+    # Authentication
+    path('api/auth/login/', views.login_view, name='auth-login'),
+    path('api/auth/register/', views.register_view, name='auth-register'),
+    path('api/auth/me/', views.me_view, name='auth-me'),
     path('api/auth/', include('rest_framework.urls')),
     # API documentation
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
