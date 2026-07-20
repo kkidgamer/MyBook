@@ -8,8 +8,14 @@ class Order(models.Model):
         PENDING = 'Pending', 'Pending'
         PAID = 'Paid', 'Paid'
         READY_FOR_DELIVERY = 'Ready_For_Delivery', 'Ready for Delivery'
+        READY_FOR_PICKUP = 'Ready_For_Pickup', 'Ready for Pickup'
         DELIVERED = 'Delivered', 'Delivered'
+        PICKED_UP = 'Picked_Up', 'Picked Up'
         CANCELLED = 'Cancelled', 'Cancelled'
+
+    class DeliveryMethod(models.TextChoices):
+        DELIVERY = 'delivery', 'Delivery'
+        PICKUP = 'pickup', 'Pickup'
 
     customer = models.ForeignKey(
         'customers.Customer',
@@ -21,6 +27,11 @@ class Order(models.Model):
         max_length=20,
         choices=Status.choices,
         default=Status.PENDING,
+    )
+    delivery_method = models.CharField(
+        max_length=10,
+        choices=DeliveryMethod.choices,
+        default=DeliveryMethod.DELIVERY,
     )
     total_amount = models.DecimalField(
         max_digits=10,
@@ -50,15 +61,21 @@ class Order(models.Model):
 
     def auto_transition_status(self):
         """Automatically transition status based on payment and fulfillment.
-        Does not override Cancelled or Delivered."""
-        if self.status in ('Cancelled', 'Delivered'):
+        Does not override Cancelled, Delivered, or Picked_Up."""
+        if self.status in ('Cancelled', 'Delivered', 'Picked_Up'):
             return
         if self.is_fully_paid:
             all_fulfilled = all(
                 item.fulfilled_quantity >= item.quantity
                 for item in self.items.all()
             )
-            new_status = self.Status.READY_FOR_DELIVERY if all_fulfilled else self.Status.PAID
+            if all_fulfilled:
+                if self.delivery_method == 'pickup':
+                    new_status = self.Status.READY_FOR_PICKUP
+                else:
+                    new_status = self.Status.READY_FOR_DELIVERY
+            else:
+                new_status = self.Status.PAID
             if new_status != self.status:
                 self.status = new_status
                 self.save(update_fields=['status'])

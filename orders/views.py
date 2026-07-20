@@ -1,3 +1,6 @@
+from datetime import timedelta
+from django.db.models import Sum, Count, Q, F, DecimalField
+from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -12,6 +15,98 @@ class OrderViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         """Stock is not affected on delete — just remove the order."""
         instance.delete()
+
+    @action(detail=False, methods=['get'])
+    def sales_report(self, request):
+        """Return aggregated sales report data."""
+        now = timezone.now()
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        week_start = today_start - timedelta(days=today_start.weekday())
+        month_start = today_start.replace(day=1)
+
+        # Base queryset: exclude cancelled orders for revenue calcs
+        active_orders = Order.objects.exclude(status='Cancelled')
+
+        # Revenue aggregates
+        total_revenue = active_orders.aggregate(
+            total=Sum('total_amount', default=0)
+        )['total']
+
+        today_revenue = active_orders.filter(
+            order_date__gte=today_start
+        ).aggregate(total=Sum('total_amount', default=0))['total']
+
+        week_revenue = active_orders.filter(
+            order_date__gte=week_start
+        ).aggregate(total=Sum('total_amount', default=0))['total']
+
+        month_revenue = active_orders.filter(
+            order_date__gte=month_start
+        ).aggregate(total=Sum('total_amount', default=0))['total']
+
+        # Payment received vs balance
+        payment_stats = Order.objects.aggregate(
+            total_received=Sum('payment_received', default=0),
+            total_pending=Sum(
+                F('total_amount') - F('payment_received'),
+                output_field=DecimalField(),
+                default=0
+            )
+        )
+
+        # Order status breakdown
+        status_counts = {
+            status: Order.objects.filter(status=status).count()
+            for status, _ in Order.Status.choices
+        }
+
+        # Top selling books
+        top_books = OrderItem.objects.values(
+            'book__title', 'book__id'
+        ).annotate(
+            quantity_sold=Sum('quantity'),
+            fulfilled=Sum('fulfilled_quantity'),
+            revenue=Sum(F('price') * F('quantity'), output_field=DecimalField()),
+        ).order_by('-quantity_sold')[:10]
+
+        # Daily revenue for last 30 days
+        thirty_days_ago = today_start - timedelta(days=30)
+        daily_revenue = []
+        for i in range(30):
+            day = today_start - timedelta(days=i)
+            next_day = day + timedelta(days=1)
+            rev = active_orders.filter(
+                order_date__gte=day,
+                order_date__lt=next_day
+            ).aggregate(total=Sum('total_amount', default=0))['total']
+            daily_revenue.append({
+                'date': day.strftime('%Y-%m-%d'),
+                'revenue': float(rev),
+            })
+        daily_revenue.reverse()
+
+        return Response({
+            'total_revenue': float(total_revenue),
+            'today_revenue': float(today_revenue),
+            'week_revenue': float(week_revenue),
+            'month_revenue': float(month_revenue),
+            'total_received': float(payment_stats['total_received']),
+            'pending_balance': float(payment_stats['total_pending']),
+            'total_orders': Order.objects.count(),
+            'status_breakdown': status_counts,
+            'top_books': [
+                {
+                    'id': b['book__id'],
+                    'title': b['book__title'],
+                    'quantity_sold': b['quantity_sold'],
+                    'fulfilled': b['fulfilled'],
+                    'revenue': float(b['revenue']),
+                }
+                for b in top_books if b['book__title']
+            ],
+            'daily_revenue': daily_revenue,
+            'generated_at': now.isoformat(),
+        })
 
 
 class OrderItemViewSet(viewsets.ModelViewSet):

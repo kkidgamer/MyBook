@@ -14,5 +14,5 @@ class BookSerializer(serializers.ModelSerializer):
     def get_has_pending_backorders(self, obj):
         return obj.order_items.filter(
             fulfilled_quantity__lt=F('quantity'),
-            order__status__in=['Pending', 'Paid', 'Ready_For_Delivery'],
+            order__status__in=['Pending', 'Paid', 'Ready_For_Delivery', 'Ready_For_Pickup'],
         ).exists()

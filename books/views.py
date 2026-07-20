@@ -49,7 +49,7 @@ class BookViewSet(viewsets.ModelViewSet):
         pending_items = OrderItem.objects.filter(
             book=book,
             fulfilled_quantity__lt=models.F('quantity'),
-            order__status__in=['Pending', 'Paid', 'Ready_For_Delivery'],
+            order__status__in=['Pending', 'Paid', 'Ready_For_Delivery', 'Ready_For_Pickup'],
         ).select_related('order').order_by('order__order_date')
 
         total_fulfilled = 0
@@ -84,6 +84,6 @@ class BookViewSet(viewsets.ModelViewSet):
             'backorders_remaining': OrderItem.objects.filter(
                 book=book,
                 fulfilled_quantity__lt=models.F('quantity'),
-                order__status__in=['Pending', 'Paid', 'Ready_For_Delivery'],
+                order__status__in=['Pending', 'Paid', 'Ready_For_Delivery', 'Ready_For_Pickup'],
             ).count(),
         })
