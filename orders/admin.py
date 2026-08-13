@@ -10,8 +10,8 @@ class OrderItemInline(admin.TabularInline):
 
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
-    list_display = ['id', 'customer', 'order_date', 'status', 'total_amount', 'payment_received', 'balance_due']
-    list_filter = ['status', 'order_date']
+    list_display = ['id', 'sale_type', 'customer', 'order_date', 'status', 'total_amount', 'payment_received', 'balance_due']
+    list_filter = ['status', 'sale_type', 'order_date']
     search_fields = ['customer__name', 'id']
     inlines = [OrderItemInline]
     readonly_fields = ['total_amount']

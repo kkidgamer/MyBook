@@ -1,4 +1,5 @@
 from datetime import timedelta
+from django.db import transaction
 from django.db.models import Sum, Count, Q, F, DecimalField
 from django.utils import timezone
 from rest_framework import viewsets, status
@@ -6,14 +7,40 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from .models import Order, OrderItem
 from .serializers import OrderSerializer, OrderItemSerializer
+from books.models import Book, StockMovement
 
 
 class OrderViewSet(viewsets.ModelViewSet):
     queryset = Order.objects.all()
     serializer_class = OrderSerializer
 
+    def get_queryset(self):
+        """Support filtering by sale type (?sale_type=walk_in|order) and
+        today's sales (?today=true)."""
+        queryset = Order.objects.all()
+        sale_type = self.request.query_params.get('sale_type')
+        if sale_type in Order.SaleType.values:
+            queryset = queryset.filter(sale_type=sale_type)
+        if self.request.query_params.get('today') == 'true':
+            today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            queryset = queryset.filter(order_date__gte=today_start)
+        return queryset
+
     def perform_destroy(self, instance):
-        """Stock is not affected on delete — just remove the order."""
+        """Deleting an order restores any fulfilled stock back into inventory
+        and logs a positive StockMovement (reason 'cancel') for traceability."""
+        with transaction.atomic():
+            for item in instance.items.select_related('book'):
+                if item.fulfilled_quantity > 0:
+                    book = Book.objects.select_for_update().get(pk=item.book_id)
+                    book.current_quantity += item.fulfilled_quantity
+                    book.save(update_fields=['current_quantity', 'updated_at'])
+                    StockMovement.objects.create(
+                        book=book,
+                        quantity_delta=item.fulfilled_quantity,
+                        reason=StockMovement.Reason.CANCEL,
+                        reference=f'Order #{instance.id} (deleted)',
+                    )
         instance.delete()
 
     @action(detail=False, methods=['get'])
@@ -60,6 +87,18 @@ class OrderViewSet(viewsets.ModelViewSet):
             for status, _ in Order.Status.choices
         }
 
+        # Sale type breakdown (orders vs walk-ins)
+        sale_type_breakdown = {}
+        for st, _ in Order.SaleType.choices:
+            qs = active_orders.filter(sale_type=st)
+            today_qs = qs.filter(order_date__gte=today_start)
+            sale_type_breakdown[st] = {
+                'count': qs.count(),
+                'revenue': float(qs.aggregate(total=Sum('total_amount', default=0))['total'] or 0),
+                'today_count': today_qs.count(),
+                'today_revenue': float(today_qs.aggregate(total=Sum('total_amount', default=0))['total'] or 0),
+            }
+
         # Top selling books
         top_books = OrderItem.objects.values(
             'book__title', 'book__id'
@@ -94,6 +133,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             'pending_balance': float(payment_stats['total_pending']),
             'total_orders': Order.objects.count(),
             'status_breakdown': status_counts,
+            'sale_type_breakdown': sale_type_breakdown,
             'top_books': [
                 {
                     'id': b['book__id'],
@@ -137,18 +177,25 @@ class OrderItemViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Check stock availability and deduct
-        book = item.book
-        if book.current_quantity < qty:
-            return Response(
-                {'error': f'Only {book.current_quantity} of "{book.title}" in stock, cannot fulfill {qty}.'},
-                status=status.HTTP_400_BAD_REQUEST
+        # Check stock availability and deduct (row locked, atomic)
+        with transaction.atomic():
+            book = Book.objects.select_for_update().get(pk=item.book_id)
+            if book.current_quantity < qty:
+                return Response(
+                    {'error': f'Only {book.current_quantity} of "{book.title}" in stock, cannot fulfill {qty}.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            book.current_quantity -= qty
+            book.save(update_fields=['current_quantity', 'updated_at'])
+            StockMovement.objects.create(
+                book=book,
+                quantity_delta=-qty,
+                reason=StockMovement.Reason.SALE,
+                reference=f'Order #{item.order_id} (fulfill)',
             )
-        book.current_quantity -= qty
-        book.save(update_fields=['current_quantity'])
 
-        item.fulfilled_quantity += qty
-        item.save(update_fields=['fulfilled_quantity'])
+            item.fulfilled_quantity += qty
+            item.save(update_fields=['fulfilled_quantity'])
 
         # Re-evaluate parent order's status after fulfillment
         item.order.auto_transition_status()

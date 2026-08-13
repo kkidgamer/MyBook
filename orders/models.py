@@ -12,15 +12,28 @@ class Order(models.Model):
         DELIVERED = 'Delivered', 'Delivered'
         PICKED_UP = 'Picked_Up', 'Picked Up'
         CANCELLED = 'Cancelled', 'Cancelled'
+        COMPLETED = 'Completed', 'Completed'  # walk-in / counter sales land here
+
+    class SaleType(models.TextChoices):
+        ORDER = 'order', 'Order'       # tracked, can be partial, delivery/pickup
+        WALK_IN = 'walk_in', 'Walk-in'  # counter sale, immediate
 
     class DeliveryMethod(models.TextChoices):
         DELIVERY = 'delivery', 'Delivery'
         PICKUP = 'pickup', 'Pickup'
 
+    sale_type = models.CharField(
+        max_length=10,
+        choices=SaleType.choices,
+        default=SaleType.ORDER,
+    )
     customer = models.ForeignKey(
         'customers.Customer',
         on_delete=models.CASCADE,
         related_name='orders',
+        null=True,
+        blank=True,
+        help_text="Required for formal orders; optional for walk-in sales.",
     )
     order_date = models.DateTimeField(auto_now_add=True)
     status = models.CharField(
@@ -49,7 +62,9 @@ class Order(models.Model):
         ordering = ['-order_date']
 
     def __str__(self):
-        return f"Order #{self.id} - {self.customer.name}"
+        if self.customer_id:
+            return f"Order #{self.id} - {self.customer.name}"
+        return f"Order #{self.id} - Walk-in"
 
     @property
     def balance_due(self):
@@ -61,8 +76,8 @@ class Order(models.Model):
 
     def auto_transition_status(self):
         """Automatically transition status based on payment and fulfillment.
-        Does not override Cancelled, Delivered, or Picked_Up."""
-        if self.status in ('Cancelled', 'Delivered', 'Picked_Up'):
+        Does not override Cancelled, Delivered, Picked_Up, or Completed (walk-ins)."""
+        if self.status in ('Cancelled', 'Delivered', 'Picked_Up', 'Completed'):
             return
         if self.is_fully_paid:
             all_fulfilled = all(

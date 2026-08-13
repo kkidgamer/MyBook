@@ -3,6 +3,43 @@ from django.core.validators import MinValueValidator
 from decimal import Decimal
 
 
+class StockMovement(models.Model):
+    """Ledger of every quantity change to a book's stock.
+
+    Every update to Book.current_quantity must be accompanied by a
+    StockMovement row so stock can always be traced (sales, restocks,
+    cancellations, returns, adjustments).
+    """
+
+    class Reason(models.TextChoices):
+        SALE = 'sale', 'Sale'
+        RESTOCK = 'restock', 'Restock'
+        ADJUSTMENT = 'adjustment', 'Adjustment'
+        RETURN = 'return', 'Return'
+        CANCEL = 'cancel', 'Cancel'
+
+    book = models.ForeignKey(
+        'Book',
+        on_delete=models.CASCADE,
+        related_name='stock_movements',
+    )
+    quantity_delta = models.IntegerField()  # negative for sale, positive for restock/return/cancel
+    reason = models.CharField(
+        max_length=20,
+        choices=Reason.choices,
+        default=Reason.ADJUSTMENT,
+    )
+    reference = models.CharField(max_length=255, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    notes = models.TextField(blank=True, default='')
+
+    class Meta:
+        ordering = ['-created_at', '-id']
+
+    def __str__(self):
+        return f"{self.quantity_delta:+d} x {self.book.title} ({self.reason})"
+
+
 class Book(models.Model):
     title = models.CharField(max_length=255)
     price = models.DecimalField(

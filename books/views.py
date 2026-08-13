@@ -1,11 +1,11 @@
-from django.db import models
+from django.db import models, transaction
 from django.urls import reverse_lazy
 from django.views.generic import ListView, CreateView
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from .models import Book
-from .serializers import BookSerializer
+from .models import Book, StockMovement
+from .serializers import BookSerializer, StockMovementSerializer
 from orders.models import Order, OrderItem
 
 
@@ -29,9 +29,15 @@ class BookViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def restock(self, request, pk=None):
-        """Add stock to a book and auto-fulfill pending backordered items (FIFO)."""
+        """Add stock to a book and auto-fulfill pending backordered items (FIFO).
+
+        Runs inside transaction.atomic() with the Book row locked via
+        select_for_update(), and logs StockMovement for the restock as well as
+        every auto-fulfillment.
+        """
         book = self.get_object()
         quantity = request.data.get('quantity', None)
+        notes = str(request.data.get('notes', '')).strip()
 
         try:
             quantity = int(quantity)
@@ -41,36 +47,53 @@ class BookViewSet(viewsets.ModelViewSet):
         if quantity <= 0:
             return Response({'error': 'Quantity must be positive'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Add to stock first
-        book.current_quantity += quantity
-        book.save(update_fields=['current_quantity'])
+        with transaction.atomic():
+            # Lock the book row so concurrent sales/restocks can't corrupt stock
+            book = Book.objects.select_for_update().get(pk=book.pk)
 
-        # Find unfulfilled order items for this book (FIFO by order date)
-        pending_items = OrderItem.objects.filter(
-            book=book,
-            fulfilled_quantity__lt=models.F('quantity'),
-            order__status__in=['Pending', 'Paid', 'Ready_For_Delivery', 'Ready_For_Pickup'],
-        ).select_related('order').order_by('order__order_date')
+            # Add to stock first, and log the restock movement
+            book.current_quantity += quantity
+            book.save(update_fields=['current_quantity', 'updated_at'])
+            StockMovement.objects.create(
+                book=book,
+                quantity_delta=quantity,
+                reason=StockMovement.Reason.RESTOCK,
+                reference='Manual restock',
+                notes=notes,
+            )
 
-        total_fulfilled = 0
-        fulfilled_orders = set()
+            # Find unfulfilled order items for this book (FIFO by order date)
+            pending_items = OrderItem.objects.filter(
+                book=book,
+                fulfilled_quantity__lt=models.F('quantity'),
+                order__status__in=['Pending', 'Paid', 'Ready_For_Delivery', 'Ready_For_Pickup'],
+            ).select_related('order').order_by('order__order_date')
 
-        for item in pending_items:
-            remaining = item.quantity - item.fulfilled_quantity
-            can_fulfill = min(remaining, book.current_quantity)
+            total_fulfilled = 0
+            fulfilled_orders = set()
 
-            if can_fulfill <= 0:
-                break
+            for item in pending_items:
+                remaining = item.quantity - item.fulfilled_quantity
+                can_fulfill = min(remaining, book.current_quantity)
 
-            # Deduct from inventory
-            book.current_quantity -= can_fulfill
-            item.fulfilled_quantity += can_fulfill
-            item.save(update_fields=['fulfilled_quantity'])
-            total_fulfilled += can_fulfill
-            fulfilled_orders.add(item.order_id)
+                if can_fulfill <= 0:
+                    break
 
-        if total_fulfilled > 0:
-            book.save(update_fields=['current_quantity'])
+                # Deduct from the locked inventory
+                book.current_quantity -= can_fulfill
+                item.fulfilled_quantity += can_fulfill
+                item.save(update_fields=['fulfilled_quantity'])
+                StockMovement.objects.create(
+                    book=book,
+                    quantity_delta=-can_fulfill,
+                    reason=StockMovement.Reason.SALE,
+                    reference=f'Order #{item.order_id} (auto-fulfill on restock)',
+                )
+                total_fulfilled += can_fulfill
+                fulfilled_orders.add(item.order_id)
+
+            if total_fulfilled > 0:
+                book.save(update_fields=['current_quantity', 'updated_at'])
 
         # Re-evaluate status for every affected order
         if fulfilled_orders:
@@ -87,3 +110,10 @@ class BookViewSet(viewsets.ModelViewSet):
                 order__status__in=['Pending', 'Paid', 'Ready_For_Delivery', 'Ready_For_Pickup'],
             ).count(),
         })
+
+    @action(detail=True, methods=['get'])
+    def movements(self, request, pk=None):
+        """Return the stock movement history for a book (newest first)."""
+        book = self.get_object()
+        movements = StockMovement.objects.filter(book=book)[:100]
+        return Response(StockMovementSerializer(movements, many=True).data)
