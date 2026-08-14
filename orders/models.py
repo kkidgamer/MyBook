@@ -29,7 +29,7 @@ class Order(models.Model):
     )
     customer = models.ForeignKey(
         'customers.Customer',
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name='orders',
         null=True,
         blank=True,
@@ -104,7 +104,7 @@ class OrderItem(models.Model):
     )
     book = models.ForeignKey(
         'books.Book',
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name='order_items',
     )
     quantity = models.PositiveIntegerField(validators=[MinValueValidator(1)])

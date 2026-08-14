@@ -27,6 +27,18 @@ class BookViewSet(viewsets.ModelViewSet):
     queryset = Book.objects.all()
     serializer_class = BookSerializer
 
+    def perform_create(self, serializer):
+        """Log the initial stock as an adjustment so the ledger covers every
+        quantity change, including a book's opening balance."""
+        book = serializer.save()
+        if book.current_quantity > 0:
+            StockMovement.objects.create(
+                book=book,
+                quantity_delta=book.current_quantity,
+                reason=StockMovement.Reason.ADJUSTMENT,
+                reference='Initial stock on create',
+            )
+
     @action(detail=True, methods=['post'])
     def restock(self, request, pk=None):
         """Add stock to a book and auto-fulfill pending backordered items (FIFO).

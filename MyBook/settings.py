@@ -10,22 +10,47 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Load environment variables from a .env file (if present). The file is git-ignored,
+# so secrets never end up in the repository.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(BASE_DIR / '.env')
+except ImportError:
+    pass
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
+
+def env_bool(name, default):
+    return os.environ.get(name, str(default)).lower() in ('1', 'true', 'yes', 'on')
+
+
+def env_list(name, default=''):
+    raw = os.environ.get(name, default)
+    return [item.strip() for item in raw.split(',') if item.strip()]
+
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-817dpqhk9eywjk)id#nbg_1^=1*j&mwy1aazj5+ba1)5rjfp!i'
+# Set SECRET_KEY in the hosting environment (or a .env file). The fallback below
+# is only a development convenience and must never be used in production.
+SECRET_KEY = os.environ.get(
+    'SECRET_KEY',
+    'django-insecure-817dpqhk9eywjk)id#nbg_1^=1*j&mwy1aazj5+ba1)5rjfp!i',
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = env_bool('DEBUG', True)
 
-ALLOWED_HOSTS = []
+# Comma-separated list, e.g. ALLOWED_HOSTS=mybook.alwaysdata.net,www.example.com
+ALLOWED_HOSTS = env_list('ALLOWED_HOSTS', 'localhost,127.0.0.1')
+
+# Alwaysdata terminates TLS at its proxy, so Django must trust the forwarded
+# scheme for request.is_secure() / redirects to work correctly.
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 
 # Application definition
@@ -38,6 +63,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     # Third-party apps
+    'corsheaders',
     'rest_framework',
     'rest_framework.authtoken',
     'drf_spectacular',
@@ -49,6 +75,8 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    # CORS middleware must be as high as possible, before CommonMiddleware.
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -63,7 +91,7 @@ ROOT_URLCONF = 'MyBook.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -81,14 +109,18 @@ WSGI_APPLICATION = 'MyBook.wsgi.application'
 
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
-
+# Credentials are read from the environment (set them on Alwaysdata under
+# Web > Sites > Environment variables, or in a local .env file).
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'mybook',
-        'HOST': 'localhost',
-        'USER': 'root',
-        'PASSWORD': '',
+        'NAME': os.environ.get('DB_NAME', 'django_mybook'),
+        'HOST': os.environ.get('DB_HOST', 'mysql-django.alwaysdata.net'),
+        'USER': os.environ.get('DB_USER', 'django'),
+        'PASSWORD': os.environ.get('DB_PASSWORD', ''),
+        'OPTIONS': {
+            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+        },
     }
 }
 
@@ -128,11 +160,36 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/4.2/howto/static-files/
 
 STATIC_URL = 'static/'
+# Directory that `python manage.py collectstatic` writes to. Alwaysdata serves
+# this folder for the /static/ path once configured in Web > Sites.
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+
+# CORS
+# https://github.com/adamchainz/django-cors-headers
+# Origins allowed to call this API from a browser. Set CORS_ALLOWED_ORIGINS on
+# the server to your deployed frontend, e.g.
+# CORS_ALLOWED_ORIGINS=https://mybook.vercel.app,https://mybook-frontend.vercel.app
+CORS_ALLOWED_ORIGINS = env_list(
+    'CORS_ALLOWED_ORIGINS',
+    'http://localhost:5173,http://127.0.0.1:5173',
+)
+CORS_ALLOW_CREDENTIALS = True
+
+# Trusted origins for CSRF (only relevant for the admin / session-based auth).
+CSRF_TRUSTED_ORIGINS = env_list('CSRF_TRUSTED_ORIGINS', '')
+
+# Production hardening (skipped while DEBUG is on so local dev keeps working
+# over plain HTTP). The API itself is token-based, so this only affects the
+# admin/docs session cookies.
+if not DEBUG:
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
 
 
 # Django REST Framework

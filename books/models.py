@@ -20,7 +20,7 @@ class StockMovement(models.Model):
 
     book = models.ForeignKey(
         'Book',
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name='stock_movements',
     )
     quantity_delta = models.IntegerField()  # negative for sale, positive for restock/return/cancel

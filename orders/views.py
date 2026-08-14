@@ -28,7 +28,8 @@ class OrderViewSet(viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         """Deleting an order restores any fulfilled stock back into inventory
-        and logs a positive StockMovement (reason 'cancel') for traceability."""
+        and logs a positive StockMovement (reason 'cancel') for traceability.
+        Stock restore and delete happen in the same transaction."""
         with transaction.atomic():
             for item in instance.items.select_related('book'):
                 if item.fulfilled_quantity > 0:
@@ -41,7 +42,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                         reason=StockMovement.Reason.CANCEL,
                         reference=f'Order #{instance.id} (deleted)',
                     )
-        instance.delete()
+            instance.delete()
 
     @action(detail=False, methods=['get'])
     def sales_report(self, request):
@@ -150,8 +151,30 @@ class OrderViewSet(viewsets.ModelViewSet):
 
 
 class OrderItemViewSet(viewsets.ModelViewSet):
+    """Read-only access to order items, plus the dedicated fulfill action.
+
+    Creating/editing/deleting order items is intentionally disabled: items must
+    be managed through the order endpoints so stock deductions and totals stay
+    consistent (any direct write here would bypass the StockMovement ledger).
+    POST is kept in http_method_names only because the fulfill action needs it;
+    the list-collection POST (create) is rejected below.
+    """
     queryset = OrderItem.objects.all()
     serializer_class = OrderItemSerializer
+    http_method_names = ['get', 'head', 'options', 'post']
+
+    def create(self, request, *args, **kwargs):
+        """Reject direct order-item creation — items must go through the order
+        endpoints so stock deductions, totals, and the ledger stay consistent."""
+        return Response(
+            {
+                'detail': (
+                    'Order items cannot be created directly. Add or edit items '
+                    'through the order endpoint so stock stays consistent.'
+                )
+            },
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
 
     @action(detail=True, methods=['post'])
     def fulfill(self, request, pk=None):

@@ -165,6 +165,37 @@ class StockMovementTests(OrderAPITestCase):
         )
 
 
+class SalesReportTests(OrderAPITestCase):
+    def test_sales_report_returns_chart_data(self):
+        # A walk-in sale today must show up in today's revenue and the daily chart
+        self.client.post('/api/orders/', {
+            'sale_type': 'walk_in',
+            'customer': None,
+            'payment_received': '500.00',
+            'items': self.make_items(self.book.id, 1),
+        }, format='json')
+
+        response = self.client.get('/api/orders/sales_report/')
+        self.assertEqual(response.status_code, 200)
+        report = response.data
+
+        # The chart expects exactly 30 daily buckets with date + revenue
+        self.assertEqual(len(report['daily_revenue']), 30)
+        last_day = report['daily_revenue'][-1]
+        self.assertIn('date', last_day)
+        self.assertGreater(last_day['revenue'], 0)
+        self.assertGreater(report['today_revenue'], 0)
+        self.assertGreater(report['total_revenue'], 0)
+
+    def test_sales_report_empty_shop(self):
+        response = self.client.get('/api/orders/sales_report/')
+        self.assertEqual(response.status_code, 200)
+        report = response.data
+        self.assertEqual(len(report['daily_revenue']), 30)
+        self.assertEqual(report['total_revenue'], 0)
+        self.assertTrue(all(d['revenue'] == 0 for d in report['daily_revenue']))
+
+
 class OrderFilterTests(OrderAPITestCase):
     def test_filter_by_sale_type(self):
         Order.objects.create(
